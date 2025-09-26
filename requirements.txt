@@ -1,0 +1,6 @@
+azure-functions
+azure-functions-worker
+pyodbc
+azure-storage-blob
+azure-ai-formrecognizer
+python-dateutil
