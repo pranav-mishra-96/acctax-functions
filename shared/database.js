@@ -1,9 +1,8 @@
-const { Connection, Request } = require('tedious');
-const config = require('./config');
+const { Connection, Request, TYPES } = require('tedious');
 
 class DatabaseManager {
     constructor() {
-        const connectionConfig = {
+        this.config = {
             server: 'acctax-sql-server.database.windows.net',
             authentication: {
                 type: 'default',
@@ -15,18 +14,25 @@ class DatabaseManager {
             options: {
                 database: 'acctax-processing-db',
                 encrypt: true,
-                port: 1433
+                port: 1433,
+                trustServerCertificate: false
             }
         };
-        this.connection = new Connection(connectionConfig);
+        this.connection = null;
     }
 
     connect() {
         return new Promise((resolve, reject) => {
+            this.connection = new Connection(this.config);
+            
             this.connection.on('connect', err => {
-                if (err) reject(err);
-                else resolve();
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve();
+                }
             });
+            
             this.connection.connect();
         });
     }
@@ -35,8 +41,11 @@ class DatabaseManager {
         return new Promise((resolve, reject) => {
             const results = [];
             const request = new Request(query, (err) => {
-                if (err) reject(err);
-                else resolve(results);
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(results);
+                }
             });
 
             params.forEach(param => {
@@ -56,29 +65,26 @@ class DatabaseManager {
     }
 
     async getOrCreateClient(email, name) {
-        await this.connect();
+        if (!this.connection) await this.connect();
 
-        // Check if client exists
         const existing = await this.executeQuery(
             'SELECT ClientID FROM Clients WHERE Email = @email',
-            [{ name: 'email', type: require('tedious').TYPES.NVarChar, value: email }]
+            [{ name: 'email', type: TYPES.NVarChar, value: email }]
         );
 
         if (existing.length > 0) {
-            // Update last processed date
             await this.executeQuery(
                 'UPDATE Clients SET LastProcessedDate = GETDATE() WHERE ClientID = @clientId',
-                [{ name: 'clientId', type: require('tedious').TYPES.Int, value: existing[0].ClientID }]
+                [{ name: 'clientId', type: TYPES.Int, value: existing[0].ClientID }]
             );
             return existing[0].ClientID;
         }
 
-        // Create new client
         await this.executeQuery(
             'INSERT INTO Clients (Email, Name) VALUES (@email, @name)',
             [
-                { name: 'email', type: require('tedious').TYPES.NVarChar, value: email },
-                { name: 'name', type: require('tedious').TYPES.NVarChar, value: name }
+                { name: 'email', type: TYPES.NVarChar, value: email },
+                { name: 'name', type: TYPES.NVarChar, value: name }
             ]
         );
 
@@ -87,14 +93,16 @@ class DatabaseManager {
     }
 
     async createDocument(clientId, fileName, blobPath, documentType) {
+        if (!this.connection) await this.connect();
+        
         await this.executeQuery(
             `INSERT INTO Documents (ClientID, OriginalFileName, BlobStoragePath, DocumentType, ProcessingStatus)
              VALUES (@clientId, @fileName, @blobPath, @documentType, 'pending')`,
             [
-                { name: 'clientId', type: require('tedious').TYPES.Int, value: clientId },
-                { name: 'fileName', type: require('tedious').TYPES.NVarChar, value: fileName },
-                { name: 'blobPath', type: require('tedious').TYPES.NVarChar, value: blobPath },
-                { name: 'documentType', type: require('tedious').TYPES.NVarChar, value: documentType }
+                { name: 'clientId', type: TYPES.Int, value: clientId },
+                { name: 'fileName', type: TYPES.NVarChar, value: fileName },
+                { name: 'blobPath', type: TYPES.NVarChar, value: blobPath },
+                { name: 'documentType', type: TYPES.NVarChar, value: documentType }
             ]
         );
 
@@ -103,20 +111,24 @@ class DatabaseManager {
     }
 
     async logProcessingStep(documentId, step, status, details) {
+        if (!this.connection) await this.connect();
+        
         await this.executeQuery(
             `INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details)
              VALUES (@documentId, @step, @status, @details)`,
             [
-                { name: 'documentId', type: require('tedious').TYPES.Int, value: documentId },
-                { name: 'step', type: require('tedious').TYPES.NVarChar, value: step },
-                { name: 'status', type: require('tedious').TYPES.NVarChar, value: status },
-                { name: 'details', type: require('tedious').TYPES.NVarChar, value: details }
+                { name: 'documentId', type: TYPES.Int, value: documentId },
+                { name: 'step', type: TYPES.NVarChar, value: step },
+                { name: 'status', type: TYPES.NVarChar, value: status },
+                { name: 'details', type: TYPES.NVarChar, value: details }
             ]
         );
     }
 
     close() {
-        this.connection.close();
+        if (this.connection) {
+            this.connection.close();
+        }
     }
 }
 
