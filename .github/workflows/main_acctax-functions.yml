@@ -1,5 +1,5 @@
 name: Deploy Node.js project to Azure Function App
-
+#comment test
 on:
   push:
     branches: ["main"]
