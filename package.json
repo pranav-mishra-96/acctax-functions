@@ -2,18 +2,12 @@
   "name": "acctax-functions",
   "version": "1.0.0",
   "description": "Tax Document Processing Functions",
-  "main": "index.js",
   "scripts": {
     "start": "func start",
-    "test": "echo \"No tests yet\"",
-    "prestart": "npm install"
+    "test": "echo \"No tests yet\""
   },
   "dependencies": {
     "@azure/functions": "^4.0.0",
-    "tedious": "^18.0.0"
-  },
-  "devDependencies": {},
-  "engines": {
-    "node": ">=18.0.0"
+    "mssql": "^11.0.1"
   }
 }

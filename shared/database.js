@@ -1,143 +1,99 @@
-const { Connection, Request, TYPES } = require('tedious');
+const sql = require('mssql');
 
 class DatabaseManager {
     constructor() {
         this.config = {
+            user: process.env.SQL_USERNAME || 'acctax_dbadmin',
+            password: process.env.SQL_PASSWORD,
             server: process.env.SQL_SERVER || 'acctax-sql-server.database.windows.net',
-            authentication: {
-                type: 'default',
-                options: {
-                    userName: process.env.SQL_USERNAME || 'acctax_dbadmin',
-                    password: process.env.SQL_PASSWORD
-                }
-            },
+            database: process.env.SQL_DATABASE || 'acctax-processing-db',
             options: {
-                database: process.env.SQL_DATABASE || 'acctax-processing-db',
                 encrypt: true,
-                port: 1433,
                 trustServerCertificate: false,
-                connectTimeout: 30000,
-                requestTimeout: 30000
-            }
+                enableArithAbort: true
+            },
+            connectionTimeout: 30000,
+            requestTimeout: 30000
         };
-        this.connection = null;
+        this.pool = null;
     }
 
-    connect() {
-        return new Promise((resolve, reject) => {
-            this.connection = new Connection(this.config);
-            
-            this.connection.on('connect', err => {
-                if (err) {
-                    console.error('Connection error:', err);
-                    reject(err);
-                } else {
-                    console.log('Database connected successfully');
-                    resolve();
-                }
-            });
-
-            this.connection.on('error', err => {
-                console.error('Connection error event:', err);
-            });
-            
-            this.connection.connect();
-        });
-    }
-
-    executeQuery(query, params = []) {
-        return new Promise((resolve, reject) => {
-            const results = [];
-            const request = new Request(query, (err) => {
-                if (err) {
-                    console.error('Query execution error:', err);
-                    reject(err);
-                } else {
-                    resolve(results);
-                }
-            });
-
-            params.forEach(param => {
-                request.addParameter(param.name, param.type, param.value);
-            });
-
-            request.on('row', columns => {
-                const row = {};
-                columns.forEach(column => {
-                    row[column.metadata.colName] = column.value;
-                });
-                results.push(row);
-            });
-
-            this.connection.execSql(request);
-        });
+    async connect() {
+        if (!this.pool) {
+            this.pool = await sql.connect(this.config);
+            console.log('Database connected successfully');
+        }
+        return this.pool;
     }
 
     async getOrCreateClient(email, name) {
-        if (!this.connection) await this.connect();
+        await this.connect();
 
-        const existing = await this.executeQuery(
-            'SELECT ClientID FROM Clients WHERE Email = @email',
-            [{ name: 'email', type: TYPES.NVarChar, value: email }]
-        );
+        // Check if client exists
+        const result = await this.pool.request()
+            .input('email', sql.NVarChar, email)
+            .query('SELECT ClientID FROM Clients WHERE Email = @email');
 
-        if (existing.length > 0) {
-            await this.executeQuery(
-                'UPDATE Clients SET LastProcessedDate = GETDATE() WHERE ClientID = @clientId',
-                [{ name: 'clientId', type: TYPES.Int, value: existing[0].ClientID }]
-            );
-            return existing[0].ClientID;
+        if (result.recordset.length > 0) {
+            const clientId = result.recordset[0].ClientID;
+            
+            // Update last processed date
+            await this.pool.request()
+                .input('clientId', sql.Int, clientId)
+                .query('UPDATE Clients SET LastProcessedDate = GETDATE() WHERE ClientID = @clientId');
+            
+            return clientId;
         }
 
-        await this.executeQuery(
-            'INSERT INTO Clients (Email, Name, CreatedDate, IsActive) VALUES (@email, @name, GETDATE(), 1)',
-            [
-                { name: 'email', type: TYPES.NVarChar, value: email },
-                { name: 'name', type: TYPES.NVarChar, value: name }
-            ]
-        );
+        // Create new client
+        await this.pool.request()
+            .input('email', sql.NVarChar, email)
+            .input('name', sql.NVarChar, name)
+            .query('INSERT INTO Clients (Email, Name, CreatedDate, IsActive) VALUES (@email, @name, GETDATE(), 1)');
 
-        const newClient = await this.executeQuery('SELECT @@IDENTITY AS ClientID');
-        return newClient[0].ClientID;
+        // Get the new client ID
+        const newClient = await this.pool.request()
+            .query('SELECT @@IDENTITY AS ClientID');
+        
+        return newClient.recordset[0].ClientID;
     }
 
     async createDocument(clientId, fileName, blobPath, documentType) {
-        if (!this.connection) await this.connect();
+        await this.connect();
         
-        await this.executeQuery(
-            `INSERT INTO Documents (ClientID, OriginalFileName, BlobStoragePath, DocumentType, ProcessingStatus, UploadTimestamp)
-             VALUES (@clientId, @fileName, @blobPath, @documentType, 'pending', GETDATE())`,
-            [
-                { name: 'clientId', type: TYPES.Int, value: clientId },
-                { name: 'fileName', type: TYPES.NVarChar, value: fileName },
-                { name: 'blobPath', type: TYPES.NVarChar, value: blobPath },
-                { name: 'documentType', type: TYPES.NVarChar, value: documentType || 'Unknown' }
-            ]
-        );
+        await this.pool.request()
+            .input('clientId', sql.Int, clientId)
+            .input('fileName', sql.NVarChar, fileName)
+            .input('blobPath', sql.NVarChar, blobPath)
+            .input('documentType', sql.NVarChar, documentType || 'Unknown')
+            .query(`INSERT INTO Documents (ClientID, OriginalFileName, BlobStoragePath, DocumentType, ProcessingStatus, UploadTimestamp)
+                    VALUES (@clientId, @fileName, @blobPath, @documentType, 'pending', GETDATE())`);
 
-        const result = await this.executeQuery('SELECT @@IDENTITY AS DocumentID');
-        return result[0].DocumentID;
+        const result = await this.pool.request()
+            .query('SELECT @@IDENTITY AS DocumentID');
+        
+        return result.recordset[0].DocumentID;
     }
 
     async logProcessingStep(documentId, step, status, details) {
-        if (!this.connection) await this.connect();
+        await this.connect();
         
-        await this.executeQuery(
-            `INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
-             VALUES (@documentId, @step, @status, @details, GETDATE())`,
-            [
-                { name: 'documentId', type: TYPES.Int, value: documentId },
-                { name: 'step', type: TYPES.NVarChar, value: step },
-                { name: 'status', type: TYPES.NVarChar, value: status },
-                { name: 'details', type: TYPES.NVarChar, value: details || '' }
-            ]
-        );
+        await this.pool.request()
+            .input('documentId', sql.Int, documentId)
+            .input('step', sql.NVarChar, step)
+            .input('status', sql.NVarChar, status)
+            .input('details', sql.NVarChar, details || '')
+            .query(`INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
+                    VALUES (@documentId, @step, @status, @details, GETDATE())`);
     }
 
-    close() {
-        if (this.connection) {
-            this.connection.close();
+    async close() {
+        if (this.pool) {
+            await this.pool.close();
+            this.pool = null;
+            console.log('Database connection closed');
         }
     }
 }
+
 module.exports = { DatabaseManager };
