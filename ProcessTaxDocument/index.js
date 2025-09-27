@@ -1,5 +1,6 @@
 const sql = require("mssql");
 const { BlobServiceClient } = require("@azure/storage-blob");
+const { AzureKeyCredential, DocumentAnalysisClient } = require("@azure/ai-form-recognizer");
 
 module.exports = async function (context, myBlob) {
   try {
@@ -11,8 +12,7 @@ module.exports = async function (context, myBlob) {
     context.log(`Processing file: ${fileName}`);
     context.log(`Full path: ${blobPath}`);
     
-    // Connect to database
-    //await sql.connect(process.env.SQL_CONNECTION_STRING);
+    // Database config
     const config = {
       server: process.env.SQL_SERVER,
       database: process.env.SQL_DATABASE,
@@ -26,7 +26,8 @@ module.exports = async function (context, myBlob) {
       connectionTimeout: 30000,
       requestTimeout: 30000
     };
-
+    
+    // Connect to database
     await sql.connect(config);
     
     // Find the document in database by blob path
@@ -62,27 +63,106 @@ module.exports = async function (context, myBlob) {
     
     context.log(`Document ${document.DocumentID} status updated to processing`);
     
-    // TODO: In next phase, call Document Intelligence here
-    // For now, just mark as ready for AI processing
-    await sql.query`
-      UPDATE Documents 
-      SET ProcessingStatus = 'ready_for_ai'
-      WHERE DocumentID = ${document.DocumentID}
-    `;
+    // Check if we should process with AI based on document type
+    if (document.DocumentType === 'T4A') {
+      context.log('Processing T4A document with Document Intelligence');
+      
+      // Initialize Document Intelligence client
+      const endpoint = process.env.DOCUMENT_INTELLIGENCE_ENDPOINT;
+      const apiKey = process.env.DOCUMENT_INTELLIGENCE_KEY;
+      const modelId = process.env.T4A_MODEL_ID || 't4a-model-v1'; // You'll set this after training
+      
+      const client = new DocumentAnalysisClient(endpoint, new AzureKeyCredential(apiKey));
+      
+      // Get blob URL for Document Intelligence
+      const blobServiceClient = BlobServiceClient.fromConnectionString(process.env.AzureWebJobsStorage);
+      const containerClient = blobServiceClient.getContainerClient('email-attachments');
+      const blobClient = containerClient.getBlobClient(context.bindingData.name);
+      const blobUrl = blobClient.url;
+      
+      context.log(`Analyzing document with model: ${modelId}`);
+      
+      // Analyze document with custom model
+      const poller = await client.beginAnalyzeDocumentFromUrl(modelId, blobUrl);
+      const result = await poller.pollUntilDone();
+      
+      context.log('Document analysis complete');
+      
+      // Extract fields
+      if (result.documents && result.documents.length > 0) {
+        const extractedDoc = result.documents[0];
+        const fields = extractedDoc.fields;
+        
+        context.log(`Extracted ${Object.keys(fields).length} fields`);
+        
+        // Store extracted data in database
+        for (const [fieldName, field] of Object.entries(fields)) {
+          if (field.value !== undefined && field.value !== null) {
+            const confidence = field.confidence || 0;
+            
+            await sql.query`
+              INSERT INTO ExtractedData (DocumentID, FieldName, FieldValue, Confidence, ExtractedTimestamp)
+              VALUES (${document.DocumentID}, ${fieldName}, ${String(field.value)}, ${confidence}, GETDATE())
+            `;
+            
+            context.log(`Stored field: ${fieldName} = ${field.value} (confidence: ${confidence})`);
+          }
+        }
+        
+        // Calculate average confidence
+        const confidences = Object.values(fields)
+          .filter(f => f.confidence !== undefined)
+          .map(f => f.confidence);
+        const avgConfidence = confidences.length > 0 
+          ? confidences.reduce((a, b) => a + b, 0) / confidences.length 
+          : 0;
+        
+        // Update document with confidence and status
+        await sql.query`
+          UPDATE Documents 
+          SET ProcessingStatus = 'completed',
+              Confidence = ${avgConfidence},
+              ProcessedTimestamp = GETDATE()
+          WHERE DocumentID = ${document.DocumentID}
+        `;
+        
+        await sql.query`
+          INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
+          VALUES (${document.DocumentID}, 'AI extraction completed', 'success', 
+                  ${`Fields extracted: ${Object.keys(fields).length}, Avg confidence: ${(avgConfidence * 100).toFixed(2)}%`}, 
+                  GETDATE())
+        `;
+        
+        context.log(`Document ${document.DocumentID} completed with confidence ${(avgConfidence * 100).toFixed(2)}%`);
+        
+      } else {
+        throw new Error('No documents found in analysis result');
+      }
+      
+    } else {
+      // For non-T4A documents, just mark as ready_for_ai for now
+      context.log(`Document type ${document.DocumentType} - no AI model available yet`);
+      
+      await sql.query`
+        UPDATE Documents 
+        SET ProcessingStatus = 'ready_for_ai'
+        WHERE DocumentID = ${document.DocumentID}
+      `;
+      
+      await sql.query`
+        INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
+        VALUES (${document.DocumentID}, 'Ready for AI processing', 'success', 
+                'File validated and ready for Document Intelligence', GETDATE())
+      `;
+    }
     
-    await sql.query`
-      INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
-      VALUES (${document.DocumentID}, 'Ready for AI processing', 'success', 
-              'File validated and ready for Document Intelligence', GETDATE())
-    `;
-    
-    context.log(`Document ${document.DocumentID} ready for AI processing`);
+    context.log(`Processing complete for document ${document.DocumentID}`);
     
   } catch (error) {
     context.log.error("Function error:", error);
     context.log.error("Error stack:", error.stack);
     
-    // Try to log error to database if we have a document ID
+    // Try to log error to database
     try {
       if (context.bindingData) {
         const blobPath = context.bindingData.blobTrigger;
@@ -92,6 +172,18 @@ module.exports = async function (context, myBlob) {
               ErrorMessage = ${error.message}
           WHERE BlobStoragePath = ${blobPath}
         `;
+        
+        const docResult = await sql.query`
+          SELECT DocumentID FROM Documents WHERE BlobStoragePath = ${blobPath}
+        `;
+        
+        if (docResult.recordset.length > 0) {
+          const docId = docResult.recordset[0].DocumentID;
+          await sql.query`
+            INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
+            VALUES (${docId}, 'Processing error', 'error', ${error.message}, GETDATE())
+          `;
+        }
       }
     } catch (dbError) {
       context.log.error("Failed to log error to database:", dbError);
