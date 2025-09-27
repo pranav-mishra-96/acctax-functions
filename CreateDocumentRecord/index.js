@@ -5,6 +5,7 @@ const { detectDocumentType } = require('../shared/utils');
 app.http('CreateDocumentRecord', {
     methods: ['POST'],
     authLevel: 'function',
+    route: 'CreateDocumentRecord',
     handler: async (request, context) => {
         context.log('CreateDocumentRecord function triggered');
         
@@ -123,7 +124,7 @@ app.http('CreateDocumentRecord', {
             // Always close the database connection
             if (db) {
                 try {
-                    db.close();
+                    await db.close();
                     context.log('Database connection closed');
                 } catch (closeError) {
                     context.log.error('Error closing database:', closeError);
