@@ -70,20 +70,27 @@ module.exports = async function (context, myBlob) {
       // Initialize Document Intelligence client
       const endpoint = process.env.DOCUMENT_INTELLIGENCE_ENDPOINT;
       const apiKey = process.env.DOCUMENT_INTELLIGENCE_KEY;
-      const modelId = process.env.T4A_MODEL_ID || 't4a-model-v1'; // You'll set this after training
+      const modelId = process.env.T4A_MODEL_ID || 't4a-model-v1';
       
       const client = new DocumentAnalysisClient(endpoint, new AzureKeyCredential(apiKey));
       
-      // Get blob URL for Document Intelligence
+      // Get blob with SAS token for Document Intelligence
       const blobServiceClient = BlobServiceClient.fromConnectionString(process.env.AzureWebJobsStorage);
       const containerClient = blobServiceClient.getContainerClient('email-attachments');
       const blobClient = containerClient.getBlobClient(context.bindingData.name);
-      const blobUrl = blobClient.url;
       
+      // Generate SAS token with read permission
+      const { BlobSASPermissions } = require("@azure/storage-blob");
+      const sasUrl = await blobClient.generateSasUrl({
+        permissions: BlobSASPermissions.parse("r"), // read permission
+        expiresOn: new Date(new Date().valueOf() + 3600 * 1000) // 1 hour expiry
+      });
+      
+      context.log(`Generated SAS URL for Document Intelligence`);
       context.log(`Analyzing document with model: ${modelId}`);
       
       // Analyze document with custom model
-      const poller = await client.beginAnalyzeDocumentFromUrl(modelId, blobUrl);
+      const poller = await client.beginAnalyzeDocumentFromUrl(modelId, sasUrl);
       const result = await poller.pollUntilDone();
       
       context.log('Document analysis complete');
