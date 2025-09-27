@@ -43,7 +43,23 @@ module.exports = async function (context, req) {
 
     // Connect to database
     context.log("Connecting to database...");
-    await sql.connect(process.env.SQL_CONNECTION_STRING);
+    //await sql.connect(process.env.SQL_CONNECTION_STRING);
+    
+    const config = {
+        server: process.env.SQL_SERVER,
+        database: process.env.SQL_DATABASE,
+        user: process.env.SQL_USERNAME,
+        password: process.env.SQL_PASSWORD,
+        options: {
+            encrypt: true,
+            trustServerCertificate: false,
+            enableArithAbort: true
+        },
+        connectionTimeout: 30000,
+        requestTimeout: 30000
+    };
+
+    await sql.connect(config);
     context.log("Database connected");
 
     // Get or create client
