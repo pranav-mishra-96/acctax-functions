@@ -5,13 +5,15 @@
   "main": "index.js",
   "scripts": {
     "start": "func start",
-    "test": "echo \"No tests yet\""
+    "test": "echo \"No tests yet\"",
+    "prestart": "npm install"
   },
   "dependencies": {
     "@azure/functions": "^4.0.0",
-    "tedious": "^16.0.0"
+    "tedious": "^18.0.0"
   },
-  "devDependencies": {
-    "@azure/functions": "^4.0.0"
+  "devDependencies": {},
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

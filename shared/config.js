@@ -1,11 +1,18 @@
 module.exports = {
-    SQL_CONNECTION_STRING: process.env.SQL_CONNECTION_STRING || 
-        'Driver={ODBC Driver 18 for SQL Server};' +
-        'Server=tcp:acctax-sql-server.database.windows.net,1433;' +
-        'Database=acctax-processing-db;' +
-        'Uid=acctax_dbadmin;' +
-        'Pwd=!One2three;' +
-        'Encrypt=yes;' +
-        'TrustServerCertificate=no;' +
-        'Connection Timeout=30;'
+    // Database configuration
+    SQL_SERVER: process.env.SQL_SERVER || 'acctax-sql-server.database.windows.net',
+    SQL_USERNAME: process.env.SQL_USERNAME,
+    SQL_PASSWORD: process.env.SQL_PASSWORD,
+    SQL_DATABASE: process.env.SQL_DATABASE || 'acctax-processing-db',
+    
+    // Azure Storage (if needed later)
+    STORAGE_ACCOUNT_NAME: process.env.STORAGE_ACCOUNT_NAME,
+    STORAGE_ACCOUNT_KEY: process.env.STORAGE_ACCOUNT_KEY,
+    
+    // Azure Document Intelligence (for future use)
+    DOCUMENT_INTELLIGENCE_ENDPOINT: process.env.DOCUMENT_INTELLIGENCE_ENDPOINT,
+    DOCUMENT_INTELLIGENCE_KEY: process.env.DOCUMENT_INTELLIGENCE_KEY,
+    
+    // Environment
+    NODE_ENV: process.env.NODE_ENV || 'production'
 };
