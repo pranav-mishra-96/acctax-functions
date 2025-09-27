@@ -3,19 +3,21 @@ const { Connection, Request, TYPES } = require('tedious');
 class DatabaseManager {
     constructor() {
         this.config = {
-            server: 'acctax-sql-server.database.windows.net',
+            server: process.env.SQL_SERVER || 'acctax-sql-server.database.windows.net',
             authentication: {
                 type: 'default',
                 options: {
-                    userName: 'acctax_dbadmin',
-                    password: '!One2three'
+                    userName: process.env.SQL_USERNAME || 'acctax_dbadmin',
+                    password: process.env.SQL_PASSWORD
                 }
             },
             options: {
-                database: 'acctax-processing-db',
+                database: process.env.SQL_DATABASE || 'acctax-processing-db',
                 encrypt: true,
                 port: 1433,
-                trustServerCertificate: false
+                trustServerCertificate: false,
+                connectTimeout: 30000,
+                requestTimeout: 30000
             }
         };
         this.connection = null;
@@ -27,10 +29,16 @@ class DatabaseManager {
             
             this.connection.on('connect', err => {
                 if (err) {
+                    console.error('Connection error:', err);
                     reject(err);
                 } else {
+                    console.log('Database connected successfully');
                     resolve();
                 }
+            });
+
+            this.connection.on('error', err => {
+                console.error('Connection error event:', err);
             });
             
             this.connection.connect();
@@ -42,6 +50,7 @@ class DatabaseManager {
             const results = [];
             const request = new Request(query, (err) => {
                 if (err) {
+                    console.error('Query execution error:', err);
                     reject(err);
                 } else {
                     resolve(results);
@@ -81,7 +90,7 @@ class DatabaseManager {
         }
 
         await this.executeQuery(
-            'INSERT INTO Clients (Email, Name) VALUES (@email, @name)',
+            'INSERT INTO Clients (Email, Name, CreatedDate, IsActive) VALUES (@email, @name, GETDATE(), 1)',
             [
                 { name: 'email', type: TYPES.NVarChar, value: email },
                 { name: 'name', type: TYPES.NVarChar, value: name }
@@ -96,13 +105,13 @@ class DatabaseManager {
         if (!this.connection) await this.connect();
         
         await this.executeQuery(
-            `INSERT INTO Documents (ClientID, OriginalFileName, BlobStoragePath, DocumentType, ProcessingStatus)
-             VALUES (@clientId, @fileName, @blobPath, @documentType, 'pending')`,
+            `INSERT INTO Documents (ClientID, OriginalFileName, BlobStoragePath, DocumentType, ProcessingStatus, UploadTimestamp)
+             VALUES (@clientId, @fileName, @blobPath, @documentType, 'pending', GETDATE())`,
             [
                 { name: 'clientId', type: TYPES.Int, value: clientId },
                 { name: 'fileName', type: TYPES.NVarChar, value: fileName },
                 { name: 'blobPath', type: TYPES.NVarChar, value: blobPath },
-                { name: 'documentType', type: TYPES.NVarChar, value: documentType }
+                { name: 'documentType', type: TYPES.NVarChar, value: documentType || 'Unknown' }
             ]
         );
 
@@ -114,13 +123,13 @@ class DatabaseManager {
         if (!this.connection) await this.connect();
         
         await this.executeQuery(
-            `INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details)
-             VALUES (@documentId, @step, @status, @details)`,
+            `INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
+             VALUES (@documentId, @step, @status, @details, GETDATE())`,
             [
                 { name: 'documentId', type: TYPES.Int, value: documentId },
                 { name: 'step', type: TYPES.NVarChar, value: step },
                 { name: 'status', type: TYPES.NVarChar, value: status },
-                { name: 'details', type: TYPES.NVarChar, value: details }
+                { name: 'details', type: TYPES.NVarChar, value: details || '' }
             ]
         );
     }
