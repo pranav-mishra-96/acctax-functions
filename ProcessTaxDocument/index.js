@@ -1,5 +1,5 @@
 const sql = require("mssql");
-const { BlobServiceClient } = require("@azure/storage-blob");
+const { BlobServiceClient, generateBlobSASQueryParameters, BlobSASPermissions, StorageSharedKeyCredential } = require("@azure/storage-blob");
 const { AzureKeyCredential, DocumentAnalysisClient } = require("@azure/ai-form-recognizer");
 
 module.exports = async function (context, myBlob) {
@@ -74,17 +74,25 @@ module.exports = async function (context, myBlob) {
       
       const client = new DocumentAnalysisClient(endpoint, new AzureKeyCredential(apiKey));
       
-      // Get blob with SAS token for Document Intelligence
-      const blobServiceClient = BlobServiceClient.fromConnectionString(process.env.AzureWebJobsStorage);
-      const containerClient = blobServiceClient.getContainerClient('email-attachments');
-      const blobClient = containerClient.getBlobClient(context.bindingData.name);
+      // Get storage account credentials
+      const storageAccountName = process.env.STORAGE_ACCOUNT_NAME;
+      const storageAccountKey = process.env.STORAGE_ACCOUNT_KEY;
       
-      // Generate SAS token with read permission
-      const { BlobSASPermissions } = require("@azure/storage-blob");
-      const sasUrl = await blobClient.generateSasUrl({
-        permissions: BlobSASPermissions.parse("r"), // read permission
-        expiresOn: new Date(new Date().valueOf() + 3600 * 1000) // 1 hour expiry
-      });
+      const containerName = 'email-attachments';
+      const blobName = context.bindingData.name;
+      
+      // Generate proper SAS token
+      const sharedKeyCredential = new StorageSharedKeyCredential(storageAccountName, storageAccountKey);
+      
+      const sasToken = generateBlobSASQueryParameters({
+        containerName: containerName,
+        blobName: blobName,
+        permissions: BlobSASPermissions.parse("r"),
+        startsOn: new Date(new Date().valueOf() - 5 * 60 * 1000), // 5 minutes ago
+        expiresOn: new Date(new Date().valueOf() + 3600 * 1000), // 1 hour from now
+      }, sharedKeyCredential).toString();
+      
+      const sasUrl = `https://${storageAccountName}.blob.core.windows.net/${containerName}/${blobName}?${sasToken}`;
       
       context.log(`Generated SAS URL for Document Intelligence`);
       context.log(`Analyzing document with model: ${modelId}`);
@@ -187,8 +195,8 @@ module.exports = async function (context, myBlob) {
         if (docResult.recordset.length > 0) {
           const docId = docResult.recordset[0].DocumentID;
           await sql.query`
-            INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, Timestamp)
-            VALUES (${docId}, 'Processing error', 'error', ${error.message}, GETDATE())
+            INSERT INTO ProcessingAudit (DocumentID, ProcessingStep, Status, Details, ErrorDetails, Timestamp)
+            VALUES (${docId}, 'Processing error', 'error', ${error.message}, ${error.stack}, GETDATE())
           `;
         }
       }
