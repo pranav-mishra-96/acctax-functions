@@ -1,7 +1,13 @@
+name: Deploy Node.js project to Azure Function App
+
+on:
+  push:
+    branches: ["main"]
+
 env:
   AZURE_FUNCTIONAPP_NAME: "acctax-functions"
   AZURE_FUNCTIONAPP_PACKAGE_PATH: "."
-  NODE_VERSION: "18.x" # Change from Python to Node
+  NODE_VERSION: "18.x"
 
 jobs:
   build-and-deploy:
