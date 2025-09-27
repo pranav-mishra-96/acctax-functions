@@ -31,7 +31,7 @@ jobs:
       - name: Install Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libssl-dev libffi-dev python3-dev
+          sudo apt-get install -y build-essential libssl-dev libffi-dev python3-dev libprotobuf-dev zlib1g-dev
 
       - name: "Resolve Project Dependencies Using Pip"
         shell: bash
